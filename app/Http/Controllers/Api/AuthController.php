@@ -22,17 +22,19 @@ class AuthController extends Controller
     public function register(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => 'required|string|min:8',
         ], [
-            'name.required' => AuthMessages::NAME_REQUIRED,
+            'first_name.required' => AuthMessages::FIRST_NAME_REQUIRED,
+            'last_name.required' => AuthMessages::LAST_NAME_REQUIRED,
             'email.required' => AuthMessages::EMAIL_REQUIRED,
             'email.email' => AuthMessages::EMAIL_INVALID,
             'email.unique' => AuthMessages::EMAIL_UNIQUE,
             'password.required' => AuthMessages::PASSWORD_REQUIRED,
             'password.min' => AuthMessages::PASSWORD_MIN,
-            'password.confirmed' => AuthMessages::PASSWORD_CONFIRMED,
+            //'password.confirmed' => AuthMessages::PASSWORD_CONFIRMED,
         ]);
 
         if ($validator->fails()) {
@@ -44,7 +46,7 @@ class AuthController extends Controller
         }
 
         try {
-            $result = $this->authService->register($request->only(['name', 'email', 'password']));
+            $result = $this->authService->register($request->only(['first_name', 'last_name', 'email', 'password']));
 
             return response()->json([
                 'success' => true,

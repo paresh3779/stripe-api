@@ -16,8 +16,10 @@ class AuthMessages
     const USER_NOT_FOUND = 'User not found.';
     const TOKEN_INVALID = 'Invalid or expired token.';
     const UNAUTHORIZED = 'Unauthorized access.';
+    const VALIDATION_FAILED = 'Validation failed.';
     // Validation error messages
-    const NAME_REQUIRED = 'Name is required.';
+    const FIRST_NAME_REQUIRED = 'First name is required.';
+    const LAST_NAME_REQUIRED = 'Last name is required.';
     const EMAIL_REQUIRED = 'Email is required.';
     const EMAIL_INVALID = 'Email must be a valid email address.';
     const EMAIL_UNIQUE = 'Email is already taken.';
