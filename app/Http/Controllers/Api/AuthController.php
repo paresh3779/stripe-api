@@ -168,4 +168,73 @@ class AuthController extends Controller
             ], Response::HTTP_BAD_REQUEST);
         }
     }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|string|email|max:255',
+        ], [
+            'email.required' => AuthMessages::EMAIL_REQUIRED,
+            'email.email' => AuthMessages::EMAIL_INVALID,
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => AuthMessages::VALIDATION_FAILED,
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $result = $this->authService->forgotPassword($request->only(['email']));
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'token' => 'required|string',
+            'password' => 'required|string|min:8',
+            'confirmPassword' => 'required|string|same:password',
+        ], [
+            'token.required' => 'Token is required.',
+            'password.required' => AuthMessages::PASSWORD_REQUIRED,
+            'password.min' => AuthMessages::PASSWORD_MIN,
+            'confirmPassword.required' => 'Confirm password is required.',
+            'confirmPassword.same' => AuthMessages::PASSWORD_CONFIRMED,
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => AuthMessages::VALIDATION_FAILED,
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $result = $this->authService->resetPassword($request->only(['token', 'password']));
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
 }

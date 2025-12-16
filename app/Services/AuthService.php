@@ -88,4 +88,63 @@ class AuthService
             'message' => AuthMessages::LOGOUT_SUCCESS,
         ];
     }
+
+    public function forgotPassword(array $data): array
+    {
+        $user = $this->userRepository->findByEmail($data['email']);
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'email' => [AuthMessages::USER_NOT_FOUND],
+            ]);
+        }
+
+        // Generate reset token
+        $token = \Illuminate\Support\Str::random(64);
+
+        // Store in password_resets table (assuming migration exists)
+        \DB::table('password_resets')->updateOrInsert(
+            ['email' => $data['email']],
+            ['token' => $token, 'created_at' => now()]
+        );
+
+        // Send email (placeholder - mail needs to be configured)
+        // \Mail::to($data['email'])->send(new ResetPasswordMail($token));
+
+        return [
+            'message' => 'Password reset link sent to your email.',
+        ];
+    }
+
+    public function resetPassword(array $data): array
+    {
+        $resetRecord = \DB::table('password_resets')
+            ->where('token', $data['token'])
+            ->where('created_at', '>', now()->subHours(1)) // Token valid for 1 hour
+            ->first();
+
+        if (!$resetRecord) {
+            throw ValidationException::withMessages([
+                'token' => [AuthMessages::TOKEN_INVALID],
+            ]);
+        }
+
+        $user = $this->userRepository->findByEmail($resetRecord->email);
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'email' => [AuthMessages::USER_NOT_FOUND],
+            ]);
+        }
+
+        // Update password
+        $user->update(['password' => \Hash::make($data['password'])]);
+
+        // Delete reset record
+        \DB::table('password_resets')->where('email', $resetRecord->email)->delete();
+
+        return [
+            'message' => 'Password reset successfully.',
+        ];
+    }
 }
