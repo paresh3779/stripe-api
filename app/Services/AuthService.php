@@ -48,10 +48,12 @@ class AuthService
             ]);
         }
 
-        // Revoke existing tokens for security
-        $user->tokens()->delete();
-
-        $token = $user->createToken('api-token')->plainTextToken;
+        // Create new API token (optionally add expiry)
+        $token = $user->createToken(
+            name: 'api-token',
+            abilities: ['*'],
+            expiresAt: now()->addMinutes(config('constants.token_expiration_minutes'))
+        )->plainTextToken;
 
         return [
             'user' => $user,

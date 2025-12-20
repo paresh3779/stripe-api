@@ -101,18 +101,18 @@ class AuthController extends Controller
                 'message' => $result['message'],
                 'data' => [
                     'user' => $result['user'],
-                    'token' => $result['token'],
+                    //'token' => $result['token'],
                 ],
             ])->cookie(
                 'api_token',
                 $result['token'],
-                60 * 24 * 7,
+                config('constants.token_expiration_minutes'),
                 '/',
-                null,
+                config('session.domain'), // IMPORTANT
                 true,
                 true,
                 false,
-                'Strict'
+                'None' // REQUIRED for cross-domain
             );
         } catch (\Exception $e) {
             return response()->json([
@@ -136,13 +136,13 @@ class AuthController extends Controller
             ])->cookie(
                 'api_token',
                 $result['token'],
-                60 * 24 * 7,
+                60 * 24 * 7, // 7 days
                 '/',
-                null,
+                config('session.domain'), // IMPORTANT
                 true,
                 true,
                 false,
-                'Strict'
+                'None' // REQUIRED for cross-domain
             );
         } catch (\Exception $e) {
             return response()->json([
