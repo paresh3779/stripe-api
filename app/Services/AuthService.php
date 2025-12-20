@@ -84,8 +84,6 @@ class AuthService
 
     public function logout(Request $request): array
     {
-        $request->user()->currentAccessToken()->delete();
-
         return [
             'message' => AuthMessages::LOGOUT_SUCCESS,
         ];
