@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\StripeWebhookController;
 
 // Auth routes
 Route::post('/register', [AuthController::class, 'register']);
@@ -20,3 +21,6 @@ Route::middleware([
     //Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::post('/logout', [AuthController::class, 'logout']);
 });
+
+
+Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle']);
