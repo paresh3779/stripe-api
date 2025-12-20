@@ -10,6 +10,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * Authentication controller using Laravel Sanctum with HTTP-only cookies.
+ */
 class AuthController extends Controller
 {
     protected AuthService $authService;
@@ -19,6 +22,10 @@ class AuthController extends Controller
         $this->authService = $authService;
     }
 
+    /**
+     * Register new user and issue authentication token.
+     * POST /api/register
+     */
     public function register(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -74,6 +81,10 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Authenticate user and issue token (stored in HTTP-only cookie).
+     * POST /api/login
+     */
     public function login(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -122,6 +133,10 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Refresh authentication token.
+     * POST /api/refresh
+     */
     public function refresh(Request $request): JsonResponse
     {
         try {
@@ -152,6 +167,10 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Logout user and revoke token.
+     * POST /api/logout
+     */
     public function logout(Request $request): JsonResponse
     {
         try {
@@ -169,6 +188,10 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Send password reset email with token.
+     * POST /api/forgot-password
+     */
     public function forgotPassword(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -201,6 +224,10 @@ class AuthController extends Controller
         }
     }
 
+    /**
+     * Reset password using token from email.
+     * POST /api/reset-password
+     */
     public function resetPassword(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
