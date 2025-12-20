@@ -22,17 +22,19 @@ class AuthController extends Controller
     public function register(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => 'required|string|min:8',
         ], [
-            'name.required' => AuthMessages::NAME_REQUIRED,
+            'first_name.required' => AuthMessages::FIRST_NAME_REQUIRED,
+            'last_name.required' => AuthMessages::LAST_NAME_REQUIRED,
             'email.required' => AuthMessages::EMAIL_REQUIRED,
             'email.email' => AuthMessages::EMAIL_INVALID,
             'email.unique' => AuthMessages::EMAIL_UNIQUE,
             'password.required' => AuthMessages::PASSWORD_REQUIRED,
             'password.min' => AuthMessages::PASSWORD_MIN,
-            'password.confirmed' => AuthMessages::PASSWORD_CONFIRMED,
+            //'password.confirmed' => AuthMessages::PASSWORD_CONFIRMED,
         ]);
 
         if ($validator->fails()) {
@@ -44,7 +46,7 @@ class AuthController extends Controller
         }
 
         try {
-            $result = $this->authService->register($request->only(['name', 'email', 'password']));
+            $result = $this->authService->register($request->only(['first_name', 'last_name', 'email', 'password']));
 
             return response()->json([
                 'success' => true,
@@ -99,18 +101,18 @@ class AuthController extends Controller
                 'message' => $result['message'],
                 'data' => [
                     'user' => $result['user'],
-                    'token' => $result['token'],
+                    //'token' => $result['token'],
                 ],
             ])->cookie(
                 'api_token',
                 $result['token'],
-                60 * 24 * 7,
+                config('constants.token_expiration_minutes'),
                 '/',
-                null,
+                config('session.domain'), // IMPORTANT
                 true,
                 true,
                 false,
-                'Strict'
+                'None' // REQUIRED for cross-domain
             );
         } catch (\Exception $e) {
             return response()->json([
@@ -134,13 +136,13 @@ class AuthController extends Controller
             ])->cookie(
                 'api_token',
                 $result['token'],
-                60 * 24 * 7,
+                60 * 24 * 7, // 7 days
                 '/',
-                null,
+                config('session.domain'), // IMPORTANT
                 true,
                 true,
                 false,
-                'Strict'
+                'None' // REQUIRED for cross-domain
             );
         } catch (\Exception $e) {
             return response()->json([
@@ -159,6 +161,75 @@ class AuthController extends Controller
                 'success' => true,
                 'message' => $result['message'],
             ])->cookie('api_token', '', -1); // Expire cookie
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|string|email|max:255',
+        ], [
+            'email.required' => AuthMessages::EMAIL_REQUIRED,
+            'email.email' => AuthMessages::EMAIL_INVALID,
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => AuthMessages::VALIDATION_FAILED,
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $result = $this->authService->forgotPassword($request->only(['email']));
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'token' => 'required|string',
+            'password' => 'required|string|min:8',
+            'confirmPassword' => 'required|string|same:password',
+        ], [
+            'token.required' => 'Token is required.',
+            'password.required' => AuthMessages::PASSWORD_REQUIRED,
+            'password.min' => AuthMessages::PASSWORD_MIN,
+            'confirmPassword.required' => 'Confirm password is required.',
+            'confirmPassword.same' => AuthMessages::PASSWORD_CONFIRMED,
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => AuthMessages::VALIDATION_FAILED,
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $result = $this->authService->resetPassword($request->only(['token', 'password']));
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
