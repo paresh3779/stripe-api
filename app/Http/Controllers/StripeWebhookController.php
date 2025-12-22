@@ -13,6 +13,8 @@ use App\Models\Coupon;
 use App\Models\PromoCode;
 use App\Models\StripeCustomer;
 use App\Models\StripePaymentMethod;
+use App\Constants\StripeEventType;
+use App\Constants\PaymentStatus;
 
 class StripeWebhookController extends Controller
 {
@@ -29,40 +31,40 @@ class StripeWebhookController extends Controller
         }
 
         switch ($event->type) {
-            case 'checkout.session.completed':
+            case StripeEventType::CHECKOUT_SESSION_COMPLETED:
                 $this->handleCheckoutSessionCompleted($event->data->object);
                 break;
-            case 'payment_intent.succeeded':
+            case StripeEventType::PAYMENT_INTENT_SUCCEEDED:
                 $this->handlePaymentIntentSucceeded($event->data->object);
                 break;
-            case 'payment_intent.payment_failed':
+            case StripeEventType::PAYMENT_INTENT_FAILED:
                 $this->handlePaymentIntentFailed($event->data->object);
                 break;
-            case 'charge.refunded':
+            case StripeEventType::CHARGE_REFUNDED:
                 $this->handleChargeRefunded($event->data->object);
                 break;
-            case 'charge.dispute.created':
+            case StripeEventType::CHARGE_DISPUTE_CREATED:
                 $this->handleChargeDisputeCreated($event->data->object);
                 break;
-            case 'charge.dispute.closed':
+            case StripeEventType::CHARGE_DISPUTE_CLOSED:
                 $this->handleChargeDisputeClosed($event->data->object);
                 break;
-            case 'customer.subscription.trial_will_end':
+            case StripeEventType::SUBSCRIPTION_TRIAL_WILL_END:
                 $this->handleSubscriptionTrialWillEnd($event->data->object);
                 break;
-            case 'customer.subscription.updated':
+            case StripeEventType::SUBSCRIPTION_UPDATED:
                 $this->handleSubscriptionUpdated($event->data->object);
                 break;
-            case 'promotion_code.created':
+            case StripeEventType::PROMOTION_CODE_CREATED:
                 $this->handlePromotionCodeCreated($event->data->object);
                 break;
-            case 'promotion_code.updated':
+            case StripeEventType::PROMOTION_CODE_UPDATED:
                 $this->handlePromotionCodeUpdated($event->data->object);
                 break;
-            case 'promotion_code.expired':
+            case StripeEventType::PROMOTION_CODE_EXPIRED:
                 $this->handlePromotionCodeExpired($event->data->object);
                 break;
-            case 'invoice.paid':
+            case StripeEventType::INVOICE_PAID:
                 $this->handleInvoicePaid($event->data->object);
                 break;
             default:
@@ -93,7 +95,7 @@ class StripeWebhookController extends Controller
                 'description' => 'Payment for ' . ($session->metadata->product_name ?? 'product'),
                 'amount' => $session->amount_total,
                 'currency' => $session->currency,
-                'status' => 'paid',
+                'status' => PaymentStatus::PAID,
                 'payment_method' => 'stripe',
                 'billing_reason' => 'subscription_cycle',
                 'paid_at' => now(),
@@ -108,7 +110,7 @@ class StripeWebhookController extends Controller
     private function handlePaymentIntentSucceeded($paymentIntent)
     {
         Payment::where('stripe_payment_intent_id', $paymentIntent->id)->update([
-            'status' => 'paid',
+            'status' => PaymentStatus::PAID,
             'paid_at' => now(),
             'updated_at' => now(),
         ]);
@@ -117,7 +119,7 @@ class StripeWebhookController extends Controller
     private function handlePaymentIntentFailed($paymentIntent)
     {
         Payment::where('stripe_payment_intent_id', $paymentIntent->id)->update([
-            'status' => 'failed',
+            'status' => PaymentStatus::FAILED,
             'updated_at' => now(),
         ]);
     }
@@ -125,7 +127,7 @@ class StripeWebhookController extends Controller
     private function handleChargeRefunded($charge)
     {
         Payment::where('stripe_charge_id', $charge->id)->update([
-            'status' => 'refunded',
+            'status' => PaymentStatus::REFUNDED,
             'updated_at' => now(),
         ]);
     }
@@ -133,7 +135,7 @@ class StripeWebhookController extends Controller
     private function handleChargeDisputeCreated($dispute)
     {
         Payment::where('stripe_charge_id', $dispute->charge)->update([
-            'status' => 'disputed',
+            'status' => PaymentStatus::DISPUTED,
             'updated_at' => now(),
         ]);
     }
@@ -141,7 +143,7 @@ class StripeWebhookController extends Controller
     private function handleChargeDisputeClosed($dispute)
     {
         Payment::where('stripe_charge_id', $dispute->charge)->update([
-            'status' => 'paid',
+            'status' => PaymentStatus::PAID,
             'updated_at' => now(),
         ]);
     }

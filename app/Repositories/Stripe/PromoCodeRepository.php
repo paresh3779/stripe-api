@@ -34,4 +34,43 @@ class PromoCodeRepository
         }
         return $promoCode;
     }
+
+    /**
+     * Find promo code by code string
+     *
+     * @param string $code
+     * @return PromoCode|null
+     */
+    public function findByCode(string $code): ?PromoCode
+    {
+        return PromoCode::with('coupon')
+            ->where('code', $code)
+            ->first();
+    }
+
+    /**
+     * Find promo code by ID
+     *
+     * @param string $id
+     * @return PromoCode|null
+     */
+    public function findById(string $id): ?PromoCode
+    {
+        return PromoCode::with('coupon')->find($id);
+    }
+
+    /**
+     * Increment redemptions count
+     *
+     * @param PromoCode $promoCode
+     * @return void
+     */
+    public function incrementRedemptions(PromoCode $promoCode): void
+    {
+        $promoCode->increment('times_redeemed');
+        
+        if ($promoCode->coupon) {
+            $promoCode->coupon->increment('times_redeemed');
+        }
+    }
 }
