@@ -16,6 +16,9 @@ class StripeEventType
     public const PROMOTION_CODE_UPDATED = 'promotion_code.updated';
     public const PROMOTION_CODE_EXPIRED = 'promotion_code.expired';
     public const INVOICE_PAID = 'invoice.paid';
+    public const INVOICE_PAYMENT_FAILED = 'invoice.payment_failed';
+    public const SUBSCRIPTION_CREATED = 'customer.subscription.created';
+    public const SUBSCRIPTION_DELETED = 'customer.subscription.deleted';
 
     /**
      * Get all event types
@@ -33,10 +36,13 @@ class StripeEventType
             self::CHARGE_DISPUTE_CLOSED,
             self::SUBSCRIPTION_TRIAL_WILL_END,
             self::SUBSCRIPTION_UPDATED,
+            self::SUBSCRIPTION_CREATED,
+            self::SUBSCRIPTION_DELETED,
             self::PROMOTION_CODE_CREATED,
             self::PROMOTION_CODE_UPDATED,
             self::PROMOTION_CODE_EXPIRED,
             self::INVOICE_PAID,
+            self::INVOICE_PAYMENT_FAILED,
         ];
     }
 }

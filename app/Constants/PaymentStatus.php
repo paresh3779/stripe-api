@@ -11,6 +11,7 @@ class PaymentStatus
     public const PARTIALLY_REFUNDED = 'partially_refunded';
     public const DISPUTED = 'disputed';
     public const PAID = 'paid';
+    public const CANCELLED = 'cancelled';
 
     /**
      * Get all payment statuses
@@ -27,6 +28,7 @@ class PaymentStatus
             self::PARTIALLY_REFUNDED,
             self::DISPUTED,
             self::PAID,
+            self::CANCELLED,
         ];
     }
 

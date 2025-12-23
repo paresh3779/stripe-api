@@ -67,6 +67,15 @@ class StripeWebhookController extends Controller
             case StripeEventType::INVOICE_PAID:
                 $this->handleInvoicePaid($event->data->object);
                 break;
+            case StripeEventType::INVOICE_PAYMENT_FAILED:
+                $this->handleInvoicePaymentFailed($event->data->object);
+                break;
+            case StripeEventType::SUBSCRIPTION_CREATED:
+                $this->handleSubscriptionCreated($event->data->object);
+                break;
+            case StripeEventType::SUBSCRIPTION_DELETED:
+                $this->handleSubscriptionDeleted($event->data->object);
+                break;
             default:
                 // Unhandled event type
                 break;
@@ -195,5 +204,60 @@ class StripeWebhookController extends Controller
                 PromoCode::where('stripe_promotion_code_id', $discount->promotion_code)->increment('times_redeemed');
             }
         }
+    }
+
+    /**
+     * Handle invoice payment failed event
+     *
+     * @param object $invoice
+     * @return void
+     */
+    private function handleInvoicePaymentFailed($invoice)
+    {
+        Payment::where('stripe_invoice_id', $invoice->id)->update([
+            'status' => PaymentStatus::FAILED,
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * Handle subscription created event
+     *
+     * @param object $subscription
+     * @return void
+     */
+    private function handleSubscriptionCreated($subscription)
+    {
+        $customer = StripeCustomer::where('stripe_customer_id', $subscription->customer)->first();
+        
+        if ($customer) {
+            Payment::insert([
+                'id' => Str::uuid(),
+                'user_id' => $customer->user_id,
+                'stripe_subscription_id' => $subscription->id,
+                'description' => 'Subscription created',
+                'amount' => $subscription->items->data[0]->price->unit_amount ?? 0,
+                'currency' => $subscription->currency,
+                'status' => $subscription->status === 'active' ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                'payment_method' => 'stripe',
+                'billing_reason' => 'subscription_create',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
+    /**
+     * Handle subscription deleted/cancelled event
+     *
+     * @param object $subscription
+     * @return void
+     */
+    private function handleSubscriptionDeleted($subscription)
+    {
+        Payment::where('stripe_subscription_id', $subscription->id)->update([
+            'status' => PaymentStatus::CANCELLED,
+            'updated_at' => now(),
+        ]);
     }
 }

@@ -73,4 +73,29 @@ class PromoCodeRepository
             $promoCode->coupon->increment('times_redeemed');
         }
     }
+
+    /**
+     * Get active promo code by code string with all validations
+     *
+     * @param string $code
+     * @return PromoCode|null
+     */
+    public function getActivePromoCodeByCode(string $code): ?PromoCode
+    {
+        return PromoCode::with('coupon')
+            ->where('code', $code)
+            ->where('active', true)
+            ->where(function ($query) {
+                $query->whereNull('valid_until')
+                    ->orWhere('valid_until', '>', now());
+            })
+            ->where(function ($query) {
+                $query->whereNull('max_redemptions')
+                    ->orWhereRaw('times_redeemed < max_redemptions');
+            })
+            ->whereHas('coupon', function ($query) {
+                $query->where('active', true);
+            })
+            ->first();
+    }
 }
