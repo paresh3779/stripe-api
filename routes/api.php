@@ -28,6 +28,7 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 Route::middleware([
     'cookie.token',
     'sanctum.rotate',
+    'sanitize',
 ])->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
@@ -35,8 +36,8 @@ Route::middleware([
     //Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    // Stripe Checkout Routes
-    Route::prefix('stripe/checkout')->group(function () {
+    // Stripe Checkout Routes - with rate limiting
+    Route::prefix('stripe/checkout')->middleware(['stripe.rate_limit:default'])->group(function () {
         // Basic Checkout (without promo code/coupon)
         Route::prefix('basic')->group(function () {
             Route::get('/products', [CheckoutController::class, 'getProducts']);
@@ -61,8 +62,8 @@ Route::middleware([
         });
     });
 
-    // Stripe PaymentIntent Routes
-    Route::prefix('stripe/payment-intent')->group(function () {
+    // Stripe PaymentIntent Routes - with strict rate limiting for payment operations
+    Route::prefix('stripe/payment-intent')->middleware(['stripe.rate_limit:strict'])->group(function () {
         // Basic PaymentIntent (without promo code/coupon)
         Route::prefix('basic')->group(function () {
             Route::get('/products', [PaymentIntentController::class, 'getProducts']);
@@ -91,8 +92,8 @@ Route::middleware([
         });
     });
 
-    // Stripe Subscription Checkout Routes
-    Route::prefix('stripe/subscription-checkout')->group(function () {
+    // Stripe Subscription Checkout Routes - with rate limiting
+    Route::prefix('stripe/subscription-checkout')->middleware(['stripe.rate_limit:default'])->group(function () {
         // Demo 1: Basic Subscription (Monthly/Yearly)
         Route::prefix('subscription')->group(function () {
             Route::get('/products', [SubscriptionCheckoutController::class, 'getProducts']);
@@ -128,8 +129,8 @@ Route::middleware([
         });
     });
 
-    // Stripe Subscription PaymentIntent Routes
-    Route::prefix('stripe/subscription-payment-intent')->group(function () {
+    // Stripe Subscription PaymentIntent Routes - with strict rate limiting
+    Route::prefix('stripe/subscription-payment-intent')->middleware(['stripe.rate_limit:strict'])->group(function () {
         // Demo 1: Basic Subscription (Monthly/Yearly)
         Route::prefix('subscription')->group(function () {
             Route::get('/products', [SubscriptionPaymentIntentController::class, 'getProducts']);
@@ -175,4 +176,6 @@ Route::middleware([
 });
 
 
-Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle']);
+// Stripe Webhook - with signature validation (no auth required)
+Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle'])
+    ->middleware(['stripe.signature']);
