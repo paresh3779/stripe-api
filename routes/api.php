@@ -11,6 +11,10 @@ use App\Http\Controllers\Api\Stripe\Subscription\SubscriptionCheckoutController;
 use App\Http\Controllers\Api\Stripe\Subscription\SubscriptionTrialCheckoutController;
 use App\Http\Controllers\Api\Stripe\Subscription\SubscriptionCouponCheckoutController;
 use App\Http\Controllers\Api\Stripe\Subscription\SubscriptionPromoCodeCheckoutController;
+use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionPaymentIntentController;
+use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionTrialPaymentIntentController;
+use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionCouponPaymentIntentController;
+use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionPromoCodePaymentIntentController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\StripeWebhookController;
@@ -121,6 +125,51 @@ Route::middleware([
             Route::post('/validate-promocode', [SubscriptionPromoCodeCheckoutController::class, 'validatePromoCode']);
             Route::post('/calculate-discount', [SubscriptionPromoCodeCheckoutController::class, 'calculateDiscount']);
             Route::post('/create-session', [SubscriptionPromoCodeCheckoutController::class, 'createCheckoutSession']);
+        });
+    });
+
+    // Stripe Subscription PaymentIntent Routes
+    Route::prefix('stripe/subscription-payment-intent')->group(function () {
+        // Demo 1: Basic Subscription (Monthly/Yearly)
+        Route::prefix('subscription')->group(function () {
+            Route::get('/products', [SubscriptionPaymentIntentController::class, 'getProducts']);
+            Route::get('/products/{productId}', [SubscriptionPaymentIntentController::class, 'getProduct']);
+            Route::post('/setup-intent', [SubscriptionPaymentIntentController::class, 'createSetupIntent']);
+            Route::post('/create', [SubscriptionPaymentIntentController::class, 'createSubscription']);
+            Route::post('/confirm', [SubscriptionPaymentIntentController::class, 'confirmSubscription']);
+        });
+
+        // Demo 2: Subscription with Trial Period
+        Route::prefix('trial')->group(function () {
+            Route::get('/products', [SubscriptionTrialPaymentIntentController::class, 'getProducts']);
+            Route::get('/products/{productId}', [SubscriptionTrialPaymentIntentController::class, 'getProduct']);
+            Route::post('/trial-info', [SubscriptionTrialPaymentIntentController::class, 'getTrialInfo']);
+            Route::post('/setup-intent', [SubscriptionTrialPaymentIntentController::class, 'createSetupIntent']);
+            Route::post('/create', [SubscriptionTrialPaymentIntentController::class, 'createSubscription']);
+            Route::post('/confirm', [SubscriptionTrialPaymentIntentController::class, 'confirmSubscription']);
+        });
+
+        // Demo 3: Subscription with Coupon
+        Route::prefix('coupon')->group(function () {
+            Route::get('/products', [SubscriptionCouponPaymentIntentController::class, 'getProducts']);
+            Route::get('/products/{productId}', [SubscriptionCouponPaymentIntentController::class, 'getProduct']);
+            Route::get('/coupons', [SubscriptionCouponPaymentIntentController::class, 'getCoupons']);
+            Route::post('/validate-coupon', [SubscriptionCouponPaymentIntentController::class, 'validateCoupon']);
+            Route::post('/calculate-discount', [SubscriptionCouponPaymentIntentController::class, 'calculateDiscount']);
+            Route::post('/setup-intent', [SubscriptionCouponPaymentIntentController::class, 'createSetupIntent']);
+            Route::post('/create', [SubscriptionCouponPaymentIntentController::class, 'createSubscription']);
+            Route::post('/confirm', [SubscriptionCouponPaymentIntentController::class, 'confirmSubscription']);
+        });
+
+        // Demo 4: Subscription with Promo Code
+        Route::prefix('promocode')->group(function () {
+            Route::get('/products', [SubscriptionPromoCodePaymentIntentController::class, 'getProducts']);
+            Route::get('/products/{productId}', [SubscriptionPromoCodePaymentIntentController::class, 'getProduct']);
+            Route::post('/validate-promocode', [SubscriptionPromoCodePaymentIntentController::class, 'validatePromoCode']);
+            Route::post('/calculate-discount', [SubscriptionPromoCodePaymentIntentController::class, 'calculateDiscount']);
+            Route::post('/setup-intent', [SubscriptionPromoCodePaymentIntentController::class, 'createSetupIntent']);
+            Route::post('/create', [SubscriptionPromoCodePaymentIntentController::class, 'createSubscription']);
+            Route::post('/confirm', [SubscriptionPromoCodePaymentIntentController::class, 'confirmSubscription']);
         });
     });
 });
