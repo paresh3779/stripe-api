@@ -17,6 +17,7 @@ class Payment extends Model
         'stripe_payment_intent_id',
         'stripe_charge_id',
         'stripe_invoice_id',
+        'stripe_subscription_id',
         'description',
         'amount',
         'currency',

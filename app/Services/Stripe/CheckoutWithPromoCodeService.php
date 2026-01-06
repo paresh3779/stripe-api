@@ -16,7 +16,7 @@ class CheckoutWithPromoCodeService
         protected readonly PriceRepository $priceRepository,
         protected readonly PromoCodeRepository $promoCodeRepository
     ) {
-        Stripe::setApiKey(config('services.stripe.secret'));
+        Stripe::setApiKey(config('stripe.secret'));
     }
 
     public function getProducts(): Collection

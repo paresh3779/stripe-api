@@ -85,11 +85,11 @@ class CheckoutWithCouponController extends Controller
         }
 
         try {
-            $userId = $request->user()?->id;
+            $user = $request->user();
             $session = $this->checkoutService->createCheckoutSession(
                 $request->price_id,
                 $request->coupon_id,
-                $userId
+                $user
             );
 
             return response()->json([

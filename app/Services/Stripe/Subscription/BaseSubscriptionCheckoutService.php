@@ -27,7 +27,7 @@ abstract class BaseSubscriptionCheckoutService
     ) {
         $this->subscriptionRepository = $subscriptionRepository;
         $this->customerRepository = $customerRepository;
-        Stripe::setApiKey(config('services.stripe.secret'));
+        Stripe::setApiKey(config('stripe.secret'));
     }
 
     /**

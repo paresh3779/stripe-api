@@ -10,5 +10,5 @@ return [
     |
     */
 
-    'token_expiration_minutes' => 30,
+    'token_expiration_minutes' => 60 * 24 * 7,
 ];

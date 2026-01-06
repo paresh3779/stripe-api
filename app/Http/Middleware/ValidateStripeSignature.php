@@ -26,8 +26,8 @@ class ValidateStripeSignature
     public function handle(Request $request, Closure $next): Response
     {
         $payload = $request->getContent();
-        $sigHeader = $request->header('Stripe-Signature');
-        $webhookSecret = config('services.stripe.webhook_secret');
+        $sigHeader = $request->header('stripe-signature');
+        $webhookSecret = config('stripe.webhook_secret');
 
         if (!$sigHeader) {
             return response()->json([

@@ -39,7 +39,7 @@ abstract class BaseSubscriptionPaymentIntentService
         $this->subscriptionRepository = $subscriptionRepository;
         $this->customerRepository = $customerRepository;
         $this->paymentRepository = $paymentRepository;
-        Stripe::setApiKey(config('services.stripe.secret'));
+        Stripe::setApiKey(config('stripe.secret'));
     }
 
     /**

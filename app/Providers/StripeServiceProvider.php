@@ -54,7 +54,7 @@ class StripeServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Configure Stripe
-        Stripe::setApiKey(config('services.stripe.secret'));
+        Stripe::setApiKey(config('stripe.secret'));
         
         // Set API version for consistency
         Stripe::setApiVersion('2023-10-16');

@@ -25,7 +25,7 @@ abstract class BasePaymentIntentService
         protected readonly StripeCustomerRepository $stripeCustomerRepository,
         protected readonly PaymentRepository $paymentRepository
     ) {
-        Stripe::setApiKey(config('services.stripe.secret'));
+        Stripe::setApiKey(config('stripe.secret'));
     }
 
     /**
