@@ -94,11 +94,24 @@ Route::middleware([
 
     // Stripe Subscription Checkout Routes - with rate limiting
     Route::prefix('stripe/subscription-checkout')->middleware(['stripe.rate_limit:default'])->group(function () {
-        // Demo 1: Basic Subscription (Monthly/Yearly)
+        // Demo 1: Basic Subscription (Monthly/Yearly) with full management
         Route::prefix('subscription')->group(function () {
+            // Products
             Route::get('/products', [SubscriptionCheckoutController::class, 'getProducts']);
             Route::get('/products/{productId}', [SubscriptionCheckoutController::class, 'getProduct']);
+            
+            // Checkout
             Route::post('/create-session', [SubscriptionCheckoutController::class, 'createCheckoutSession']);
+            
+            // Subscription Management
+            Route::get('/subscriptions', [SubscriptionCheckoutController::class, 'getSubscriptions']);
+            Route::get('/subscriptions/{subscriptionId}', [SubscriptionCheckoutController::class, 'getSubscription']);
+            Route::post('/subscriptions/{subscriptionId}/cancel', [SubscriptionCheckoutController::class, 'cancelSubscription']);
+            
+            // Invoice Management
+            Route::get('/invoices', [SubscriptionCheckoutController::class, 'getInvoices']);
+            Route::get('/invoices/{invoiceId}', [SubscriptionCheckoutController::class, 'getInvoice']);
+            Route::get('/invoices/{invoiceId}/download', [SubscriptionCheckoutController::class, 'downloadInvoice']);
         });
 
         // Demo 2: Subscription with Trial Period

@@ -12,13 +12,15 @@ class StripeEventType
     public const CHARGE_DISPUTE_CLOSED = 'charge.dispute.closed';
     public const SUBSCRIPTION_TRIAL_WILL_END = 'customer.subscription.trial_will_end';
     public const SUBSCRIPTION_UPDATED = 'customer.subscription.updated';
+    public const SUBSCRIPTION_CREATED = 'customer.subscription.created';
+    public const SUBSCRIPTION_DELETED = 'customer.subscription.deleted';
     public const PROMOTION_CODE_CREATED = 'promotion_code.created';
     public const PROMOTION_CODE_UPDATED = 'promotion_code.updated';
     public const PROMOTION_CODE_EXPIRED = 'promotion_code.expired';
+    public const INVOICE_CREATED = 'invoice.created';
+    public const INVOICE_FINALIZED = 'invoice.finalized';
     public const INVOICE_PAID = 'invoice.paid';
     public const INVOICE_PAYMENT_FAILED = 'invoice.payment_failed';
-    public const SUBSCRIPTION_CREATED = 'customer.subscription.created';
-    public const SUBSCRIPTION_DELETED = 'customer.subscription.deleted';
 
     /**
      * Get all event types
@@ -41,6 +43,8 @@ class StripeEventType
             self::PROMOTION_CODE_CREATED,
             self::PROMOTION_CODE_UPDATED,
             self::PROMOTION_CODE_EXPIRED,
+            self::INVOICE_CREATED,
+            self::INVOICE_FINALIZED,
             self::INVOICE_PAID,
             self::INVOICE_PAYMENT_FAILED,
         ];

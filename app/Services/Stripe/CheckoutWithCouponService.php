@@ -89,7 +89,7 @@ class CheckoutWithCouponService
                     //     ],
                     'quantity' => 1,
                     ]
-            ],
+        ],
             'mode' => 'payment',
             'success_url' => config('app.frontend_url') . '/main/stripe-checkout/coupon',
             'cancel_url' => config('app.frontend_url') . '/main/stripe-checkout/coupon',

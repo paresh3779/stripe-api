@@ -13,8 +13,18 @@ use App\Models\Coupon;
 use App\Models\PromoCode;
 use App\Models\StripeCustomer;
 use App\Models\StripePaymentMethod;
+use App\Models\Subscription;
+use App\Models\Invoice;
 use App\Constants\StripeEventType;
 use App\Constants\PaymentStatus;
+use App\Services\Stripe\Subscription\SubscriptionCheckoutService;
+use App\Mail\SubscriptionCreatedMail;
+use App\Mail\SubscriptionCancelledMail;
+use App\Mail\SubscriptionExpiredMail;
+use App\Mail\SubscriptionExpirationReminderMail;
+use App\Mail\InvoicePaidMail;
+use App\Mail\PaymentFailedMail;
+use Illuminate\Support\Facades\Mail;
 
 class StripeWebhookController extends Controller
 {
@@ -57,6 +67,12 @@ class StripeWebhookController extends Controller
             case StripeEventType::SUBSCRIPTION_UPDATED:
                 $this->handleSubscriptionUpdated($event->data->object);
                 break;
+            case StripeEventType::SUBSCRIPTION_CREATED:
+                $this->handleSubscriptionCreated($event->data->object);
+                break;
+            case StripeEventType::SUBSCRIPTION_DELETED:
+                $this->handleSubscriptionDeleted($event->data->object);
+                break;
             case StripeEventType::PROMOTION_CODE_CREATED:
                 $this->handlePromotionCodeCreated($event->data->object);
                 break;
@@ -66,20 +82,20 @@ class StripeWebhookController extends Controller
             case StripeEventType::PROMOTION_CODE_EXPIRED:
                 $this->handlePromotionCodeExpired($event->data->object);
                 break;
+            case StripeEventType::INVOICE_CREATED:
+                $this->handleInvoiceCreated($event->data->object);
+                break;
+            case StripeEventType::INVOICE_FINALIZED:
+                $this->handleInvoiceFinalized($event->data->object);
+                break;
             case StripeEventType::INVOICE_PAID:
                 $this->handleInvoicePaid($event->data->object);
                 break;
             case StripeEventType::INVOICE_PAYMENT_FAILED:
                 $this->handleInvoicePaymentFailed($event->data->object);
                 break;
-            case StripeEventType::SUBSCRIPTION_CREATED:
-                $this->handleSubscriptionCreated($event->data->object);
-                break;
-            case StripeEventType::SUBSCRIPTION_DELETED:
-                $this->handleSubscriptionDeleted($event->data->object);
-                break;
             default:
-                // Unhandled event type
+                \Log::info('Webhook: Unhandled event type', ['type' => $event->type]);
                 break;
         }
 
@@ -292,15 +308,49 @@ class StripeWebhookController extends Controller
         }
     }
 
-    private function handleSubscriptionUpdated($subscription)
+    private function handleSubscriptionUpdated($stripeSubscription)
     {
         \Log::info('Webhook: handleSubscriptionUpdated', [
-            'subscription_id' => $subscription->id,
-            'customer' => $subscription->customer,
-            'status' => $subscription->status,
+            'subscription_id' => $stripeSubscription->id,
+            'customer' => $stripeSubscription->customer,
+            'status' => $stripeSubscription->status,
         ]);
 
-        // Update subscription status
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $subscription = $subscriptionService->syncSubscriptionFromStripe($stripeSubscription);
+
+            if ($subscription) {
+                // Check if subscription is about to expire and send reminder
+                if ($subscription->cancel_at_period_end && $subscription->current_period_end) {
+                    $daysRemaining = now()->diffInDays($subscription->current_period_end, false);
+                    
+                    // Send reminder if expiring in 7, 3, or 1 day
+                    if (in_array($daysRemaining, [7, 3, 1])) {
+                        $user = $subscription->user;
+                        if ($user && $user->email) {
+                            Mail::to($user->email)->queue(
+                                new SubscriptionExpirationReminderMail($subscription, $daysRemaining)
+                            );
+                            \Log::info('handleSubscriptionUpdated: Expiration reminder queued', [
+                                'subscription_id' => $subscription->id,
+                                'days_remaining' => $daysRemaining,
+                            ]);
+                        }
+                    }
+                }
+
+                \Log::info('handleSubscriptionUpdated: Subscription synced', [
+                    'subscription_id' => $subscription->id,
+                    'status' => $subscription->status,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleSubscriptionUpdated: Error', [
+                'error' => $e->getMessage(),
+                'subscription_id' => $stripeSubscription->id,
+            ]);
+        }
     }
 
     private function handlePromotionCodeCreated($promotionCode)
@@ -347,18 +397,41 @@ class StripeWebhookController extends Controller
         ]);
     }
 
-    private function handleInvoicePaid($invoice)
+    private function handleInvoicePaid($stripeInvoice)
     {
         \Log::info('Webhook: handleInvoicePaid', [
-            'invoice_id' => $invoice->id,
-            'customer' => $invoice->customer,
-            'amount_paid' => $invoice->amount_paid,
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+            'amount_paid' => $stripeInvoice->amount_paid,
         ]);
 
-        if ($invoice->discounts) {
-            foreach ($invoice->discounts as $discount) {
-                PromoCode::where('stripe_promotion_code_id', $discount->promotion_code)->increment('times_redeemed');
+        try {
+            // Sync invoice to database
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+
+            if ($invoice) {
+                // Send invoice paid email
+                $user = $invoice->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new InvoicePaidMail($invoice));
+                    \Log::info('handleInvoicePaid: Email queued', [
+                        'invoice_id' => $invoice->id,
+                    ]);
+                }
             }
+
+            // Handle promo code redemptions
+            if ($stripeInvoice->discounts) {
+                foreach ($stripeInvoice->discounts as $discount) {
+                    PromoCode::where('stripe_promotion_code_id', $discount->promotion_code)->increment('times_redeemed');
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleInvoicePaid: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
         }
     }
 
@@ -368,18 +441,44 @@ class StripeWebhookController extends Controller
      * @param object $invoice
      * @return void
      */
-    private function handleInvoicePaymentFailed($invoice)
+    private function handleInvoicePaymentFailed($stripeInvoice)
     {
         \Log::info('Webhook: handleInvoicePaymentFailed', [
-            'invoice_id' => $invoice->id,
-            'customer' => $invoice->customer,
-            'attempt_count' => $invoice->attempt_count ?? null,
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+            'attempt_count' => $stripeInvoice->attempt_count ?? null,
         ]);
 
-        Payment::where('stripe_invoice_id', $invoice->id)->update([
-            'status' => PaymentStatus::FAILED,
-            'updated_at' => now(),
-        ]);
+        try {
+            // Sync invoice to database
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+
+            if ($invoice) {
+                // Get related subscription if any
+                $subscription = $invoice->subscription;
+
+                // Send payment failed email
+                $user = $invoice->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new PaymentFailedMail($invoice, $subscription));
+                    \Log::info('handleInvoicePaymentFailed: Email queued', [
+                        'invoice_id' => $invoice->id,
+                    ]);
+                }
+            }
+
+            // Update related payments
+            Payment::where('stripe_invoice_id', $stripeInvoice->id)->update([
+                'status' => PaymentStatus::FAILED,
+                'updated_at' => now(),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('handleInvoicePaymentFailed: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
     }
 
     /**
@@ -388,38 +487,37 @@ class StripeWebhookController extends Controller
      * @param object $subscription
      * @return void
      */
-    private function handleSubscriptionCreated($subscription)
+    private function handleSubscriptionCreated($stripeSubscription)
     {
         \Log::info('Webhook: handleSubscriptionCreated', [
-            'subscription_id' => $subscription->id,
-            'customer' => $subscription->customer,
-            'status' => $subscription->status,
+            'subscription_id' => $stripeSubscription->id,
+            'customer' => $stripeSubscription->customer,
+            'status' => $stripeSubscription->status,
         ]);
 
-        $customer = StripeCustomer::where('stripe_customer_id', $subscription->customer)->first();
-        
-        if ($customer) {
-            Payment::insert([
-                'id' => Str::uuid(),
-                'user_id' => $customer->user_id,
-                'stripe_subscription_id' => $subscription->id,
-                'description' => 'Subscription created',
-                'amount' => $subscription->items->data[0]->price->unit_amount ?? 0,
-                'currency' => $subscription->currency,
-                'status' => $subscription->status === 'active' ? PaymentStatus::SUCCEEDED : PaymentStatus::PENDING,
-                'payment_method' => 'stripe',
-                'billing_reason' => 'subscription_create',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $subscription = $subscriptionService->syncSubscriptionFromStripe($stripeSubscription);
 
-            \Log::info('handleSubscriptionCreated: Payment record created', [
-                'user_id' => $customer->user_id,
-                'subscription_id' => $subscription->id,
-            ]);
-        } else {
-            \Log::warning('handleSubscriptionCreated: StripeCustomer not found', [
-                'stripe_customer_id' => $subscription->customer,
+            if ($subscription) {
+                // Send subscription created email
+                $user = $subscription->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new SubscriptionCreatedMail($subscription));
+                    \Log::info('handleSubscriptionCreated: Email queued', [
+                        'subscription_id' => $subscription->id,
+                        'user_id' => $user->id,
+                    ]);
+                }
+
+                \Log::info('handleSubscriptionCreated: Subscription synced', [
+                    'subscription_id' => $subscription->id,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleSubscriptionCreated: Error', [
+                'error' => $e->getMessage(),
+                'subscription_id' => $stripeSubscription->id,
             ]);
         }
     }
@@ -430,17 +528,102 @@ class StripeWebhookController extends Controller
      * @param object $subscription
      * @return void
      */
-    private function handleSubscriptionDeleted($subscription)
+    private function handleSubscriptionDeleted($stripeSubscription)
     {
         \Log::info('Webhook: handleSubscriptionDeleted', [
-            'subscription_id' => $subscription->id,
-            'customer' => $subscription->customer,
-            'canceled_at' => $subscription->canceled_at ?? null,
+            'subscription_id' => $stripeSubscription->id,
+            'customer' => $stripeSubscription->customer,
+            'canceled_at' => $stripeSubscription->canceled_at ?? null,
         ]);
 
-        Payment::where('stripe_subscription_id', $subscription->id)->update([
-            'status' => PaymentStatus::CANCELLED,
-            'updated_at' => now(),
+        try {
+            $subscription = Subscription::where('stripe_subscription_id', $stripeSubscription->id)->first();
+
+            if ($subscription) {
+                $subscription->update([
+                    'status' => 'canceled',
+                    'canceled_at' => $stripeSubscription->canceled_at 
+                        ? \Carbon\Carbon::createFromTimestamp($stripeSubscription->canceled_at) 
+                        : now(),
+                    'ended_at' => now(),
+                ]);
+
+                // Send subscription expired email
+                $user = $subscription->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new SubscriptionExpiredMail($subscription));
+                    \Log::info('handleSubscriptionDeleted: Expired email queued', [
+                        'subscription_id' => $subscription->id,
+                    ]);
+                }
+            }
+
+            // Update related payments
+            Payment::where('stripe_subscription_id', $stripeSubscription->id)->update([
+                'status' => PaymentStatus::CANCELLED,
+                'updated_at' => now(),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('handleSubscriptionDeleted: Error', [
+                'error' => $e->getMessage(),
+                'subscription_id' => $stripeSubscription->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle invoice created event
+     *
+     * @param object $invoice
+     * @return void
+     */
+    private function handleInvoiceCreated($stripeInvoice)
+    {
+        \Log::info('Webhook: handleInvoiceCreated', [
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+            'status' => $stripeInvoice->status,
         ]);
+
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+
+            if ($invoice) {
+                \Log::info('handleInvoiceCreated: Invoice synced', [
+                    'invoice_id' => $invoice->id,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleInvoiceCreated: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle invoice finalized event
+     *
+     * @param object $invoice
+     * @return void
+     */
+    private function handleInvoiceFinalized($stripeInvoice)
+    {
+        \Log::info('Webhook: handleInvoiceFinalized', [
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+            'amount_due' => $stripeInvoice->amount_due,
+        ]);
+
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+        } catch (\Exception $e) {
+            \Log::error('handleInvoiceFinalized: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
     }
 }
