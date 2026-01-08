@@ -13,8 +13,8 @@ use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Controller for subscription PaymentIntent with trial period
- * Demo 2: Product with trial period
+ * Controller for subscription PaymentIntent with 15-day trial period
+ * Handles: Products, Checkout, Subscription Management, Payment Methods, Invoices
  */
 class SubscriptionTrialPaymentIntentController extends Controller
 {
@@ -22,10 +22,10 @@ class SubscriptionTrialPaymentIntentController extends Controller
         protected readonly SubscriptionTrialPaymentIntentService $paymentIntentService
     ) {}
 
+    // ==================== Products ====================
+
     /**
      * Get all subscription products with trial periods
-     *
-     * @return JsonResponse
      */
     public function getProducts(): JsonResponse
     {
@@ -46,9 +46,6 @@ class SubscriptionTrialPaymentIntentController extends Controller
 
     /**
      * Get a single subscription product
-     *
-     * @param string $productId
-     * @return JsonResponse
      */
     public function getProduct(string $productId): JsonResponse
     {
@@ -69,9 +66,6 @@ class SubscriptionTrialPaymentIntentController extends Controller
 
     /**
      * Get trial information for a specific price
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function getTrialInfo(Request $request): JsonResponse
     {
@@ -102,11 +96,117 @@ class SubscriptionTrialPaymentIntentController extends Controller
         }
     }
 
+    // ==================== Payment Methods ====================
+
+    /**
+     * Get user's saved payment methods
+     */
+    public function getPaymentMethods(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $paymentMethods = $this->paymentIntentService->getUserPaymentMethods($user);
+
+            return response()->json([
+                'success' => true,
+                'data' => $paymentMethods,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Save a new payment method
+     */
+    public function savePaymentMethod(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'payment_method_id' => 'required|string',
+            'set_default' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment method ID is required',
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $result = $this->paymentIntentService->savePaymentMethod(
+                $request->payment_method_id,
+                $user,
+                $request->boolean('set_default', true)
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment method saved successfully',
+                'data' => $result,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Delete a saved payment method
+     */
+    public function deletePaymentMethod(Request $request, string $paymentMethodId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $this->paymentIntentService->deletePaymentMethod($paymentMethodId, $user);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment method deleted successfully',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    // ==================== Checkout ====================
+
     /**
      * Create a SetupIntent for trial subscription
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function createSetupIntent(Request $request): JsonResponse
     {
@@ -150,10 +250,7 @@ class SubscriptionTrialPaymentIntentController extends Controller
     }
 
     /**
-     * Create a subscription with trial period
-     *
-     * @param Request $request
-     * @return JsonResponse
+     * Create a subscription with trial period (new payment method)
      */
     public function createSubscription(Request $request): JsonResponse
     {
@@ -200,10 +297,54 @@ class SubscriptionTrialPaymentIntentController extends Controller
     }
 
     /**
+     * Create subscription using existing saved payment method
+     */
+    public function createSubscriptionWithSavedMethod(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'price_id' => 'required|string|exists:prices,id',
+            'saved_payment_method_id' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $result = $this->paymentIntentService->createSubscriptionWithExistingPaymentMethod(
+                $request->price_id,
+                $request->saved_payment_method_id,
+                $user
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => SubscriptionPaymentIntentMessages::TRIAL_STARTED,
+                'data' => $result,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
      * Confirm subscription status
-     *
-     * @param Request $request
-     * @return JsonResponse
      */
     public function confirmSubscription(Request $request): JsonResponse
     {
@@ -226,6 +367,228 @@ class SubscriptionTrialPaymentIntentController extends Controller
                 'success' => true,
                 'message' => SubscriptionPaymentIntentMessages::PAYMENT_CONFIRMED,
                 'data' => $result,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    // ==================== Subscription Management ====================
+
+    /**
+     * Get user's subscriptions
+     */
+    public function getSubscriptions(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $subscriptions = $this->paymentIntentService->getUserSubscriptions($user);
+
+            return response()->json([
+                'success' => true,
+                'data' => $subscriptions,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Get a single subscription
+     */
+    public function getSubscription(Request $request, string $subscriptionId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $subscription = $this->paymentIntentService->getSubscription($subscriptionId, $user);
+
+            if (!$subscription) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Subscription not found',
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $subscription,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Cancel subscription (with optional immediate cancellation and refund)
+     */
+    public function cancelSubscription(Request $request, string $subscriptionId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'immediate' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid request parameters',
+                'errors' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $result = $this->paymentIntentService->cancelSubscription(
+                $subscriptionId,
+                $user,
+                $request->boolean('immediate', false)
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => [
+                    'subscription' => $result['subscription'],
+                    'refund' => $result['refund'],
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    // ==================== Invoice Management ====================
+
+    /**
+     * Get user's invoices
+     */
+    public function getInvoices(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $subscriptionId = $request->query('subscription_id');
+            $invoices = $this->paymentIntentService->getUserInvoices($user, $subscriptionId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $invoices,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Get a single invoice
+     */
+    public function getInvoice(Request $request, string $invoiceId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $invoice = $this->paymentIntentService->getInvoice($invoiceId, $user);
+
+            if (!$invoice) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invoice not found',
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $invoice,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Download invoice PDF (returns URL)
+     */
+    public function downloadInvoice(Request $request, string $invoiceId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => SubscriptionPaymentIntentMessages::USER_NOT_AUTHENTICATED,
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            $pdfUrl = $this->paymentIntentService->getInvoicePdfUrl($invoiceId, $user);
+
+            if (!$pdfUrl) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invoice PDF not available',
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'pdf_url' => $pdfUrl,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([

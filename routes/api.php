@@ -153,14 +153,33 @@ Route::middleware([
             Route::post('/confirm', [SubscriptionPaymentIntentController::class, 'confirmSubscription']);
         });
 
-        // Demo 2: Subscription with Trial Period
+        // Demo 2: Subscription with 15-day Trial Period (Full Management)
         Route::prefix('trial')->group(function () {
+            // Products
             Route::get('/products', [SubscriptionTrialPaymentIntentController::class, 'getProducts']);
             Route::get('/products/{productId}', [SubscriptionTrialPaymentIntentController::class, 'getProduct']);
             Route::post('/trial-info', [SubscriptionTrialPaymentIntentController::class, 'getTrialInfo']);
+            
+            // Payment Methods
+            Route::get('/payment-methods', [SubscriptionTrialPaymentIntentController::class, 'getPaymentMethods']);
+            Route::post('/payment-methods', [SubscriptionTrialPaymentIntentController::class, 'savePaymentMethod']);
+            Route::delete('/payment-methods/{paymentMethodId}', [SubscriptionTrialPaymentIntentController::class, 'deletePaymentMethod']);
+            
+            // Checkout
             Route::post('/setup-intent', [SubscriptionTrialPaymentIntentController::class, 'createSetupIntent']);
             Route::post('/create', [SubscriptionTrialPaymentIntentController::class, 'createSubscription']);
+            Route::post('/create-with-saved', [SubscriptionTrialPaymentIntentController::class, 'createSubscriptionWithSavedMethod']);
             Route::post('/confirm', [SubscriptionTrialPaymentIntentController::class, 'confirmSubscription']);
+            
+            // Subscription Management
+            Route::get('/subscriptions', [SubscriptionTrialPaymentIntentController::class, 'getSubscriptions']);
+            Route::get('/subscriptions/{subscriptionId}', [SubscriptionTrialPaymentIntentController::class, 'getSubscription']);
+            Route::post('/subscriptions/{subscriptionId}/cancel', [SubscriptionTrialPaymentIntentController::class, 'cancelSubscription']);
+            
+            // Invoice Management
+            Route::get('/invoices', [SubscriptionTrialPaymentIntentController::class, 'getInvoices']);
+            Route::get('/invoices/{invoiceId}', [SubscriptionTrialPaymentIntentController::class, 'getInvoice']);
+            Route::get('/invoices/{invoiceId}/download', [SubscriptionTrialPaymentIntentController::class, 'downloadInvoice']);
         });
 
         // Demo 3: Subscription with Coupon
