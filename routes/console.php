@@ -9,3 +9,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('sanctum:prune-expired --hours=24')->daily();
+
+// Subscription reminder emails - run daily at 9 AM
+Schedule::command('subscriptions:send-trial-reminders')->dailyAt('09:00');
+Schedule::command('subscriptions:send-expiration-reminders')->dailyAt('09:00');

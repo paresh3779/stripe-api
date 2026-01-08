@@ -32,6 +32,7 @@ use App\Mail\PaymentRetrySucceededMail;
 use App\Mail\RefundConfirmationMail;
 use App\Mail\DisputeNotificationMail;
 use App\Mail\DisputeResolvedMail;
+use App\Mail\TrialEndingReminderMail;
 use Illuminate\Support\Facades\Mail;
 
 class StripeWebhookController extends Controller
@@ -406,19 +407,40 @@ class StripeWebhookController extends Controller
         }
     }
 
-    private function handleSubscriptionTrialWillEnd($subscription)
+    private function handleSubscriptionTrialWillEnd($stripeSubscription)
     {
         \Log::info('Webhook: handleSubscriptionTrialWillEnd', [
-            'subscription_id' => $subscription->id,
-            'customer' => $subscription->customer,
-            'trial_end' => $subscription->trial_end,
+            'subscription_id' => $stripeSubscription->id,
+            'customer' => $stripeSubscription->customer,
+            'trial_end' => $stripeSubscription->trial_end,
         ]);
 
-        $customer = StripeCustomer::where('stripe_customer_id', $subscription->customer)->first();
-        if ($customer) {
-            // Send notification
-            \Log::info('handleSubscriptionTrialWillEnd: Customer found, notification pending', [
-                'user_id' => $customer->user_id,
+        try {
+            $subscription = Subscription::where('stripe_subscription_id', $stripeSubscription->id)
+                ->with(['user', 'product'])
+                ->first();
+
+            if ($subscription && $subscription->user) {
+                $trialEnd = $stripeSubscription->trial_end 
+                    ? \Carbon\Carbon::createFromTimestamp($stripeSubscription->trial_end)
+                    : $subscription->trial_end;
+
+                $daysRemaining = $trialEnd ? (int) now()->diffInDays($trialEnd, false) : 3;
+                $daysRemaining = max(1, $daysRemaining); // At least 1 day
+
+                $user = $subscription->user;
+                if ($user->email) {
+                    Mail::to($user->email)->queue(new TrialEndingReminderMail($subscription, $daysRemaining));
+                    \Log::info('handleSubscriptionTrialWillEnd: Email queued', [
+                        'subscription_id' => $subscription->id,
+                        'days_remaining' => $daysRemaining,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleSubscriptionTrialWillEnd: Error', [
+                'error' => $e->getMessage(),
+                'subscription_id' => $stripeSubscription->id,
             ]);
         }
     }
@@ -701,23 +723,16 @@ class StripeWebhookController extends Controller
         ]);
 
         try {
+            // Sync invoice to database - no email here
+            // Emails are sent on invoice.finalized (by Stripe) or invoice.paid (by us)
+            // This avoids duplicate/premature emails for draft invoices
             $subscriptionService = app(SubscriptionCheckoutService::class);
             $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
 
             if ($invoice) {
-                // Send invoice created email for non-draft invoices
-                if ($stripeInvoice->status !== 'draft') {
-                    $user = $invoice->user;
-                    if ($user && $user->email) {
-                        Mail::to($user->email)->queue(new InvoiceCreatedMail($invoice));
-                        \Log::info('handleInvoiceCreated: Email queued', [
-                            'invoice_id' => $invoice->id,
-                        ]);
-                    }
-                }
-
-                \Log::info('handleInvoiceCreated: Invoice synced', [
+                \Log::info('handleInvoiceCreated: Invoice synced (no email - waiting for finalized/paid)', [
                     'invoice_id' => $invoice->id,
+                    'status' => $stripeInvoice->status,
                 ]);
             }
         } catch (\Exception $e) {
