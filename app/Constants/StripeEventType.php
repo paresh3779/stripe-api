@@ -21,6 +21,9 @@ class StripeEventType
     public const INVOICE_FINALIZED = 'invoice.finalized';
     public const INVOICE_PAID = 'invoice.paid';
     public const INVOICE_PAYMENT_FAILED = 'invoice.payment_failed';
+    public const INVOICE_UPCOMING = 'invoice.upcoming';
+    public const INVOICE_VOIDED = 'invoice.voided';
+    public const INVOICE_MARKED_UNCOLLECTIBLE = 'invoice.marked_uncollectible';
 
     /**
      * Get all event types
@@ -47,6 +50,9 @@ class StripeEventType
             self::INVOICE_FINALIZED,
             self::INVOICE_PAID,
             self::INVOICE_PAYMENT_FAILED,
+            self::INVOICE_UPCOMING,
+            self::INVOICE_VOIDED,
+            self::INVOICE_MARKED_UNCOLLECTIBLE,
         ];
     }
 }

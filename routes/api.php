@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionPaymen
 use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionTrialPaymentIntentController;
 use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionCouponPaymentIntentController;
 use App\Http\Controllers\Api\Stripe\SubscriptionPaymentIntent\SubscriptionPromoCodePaymentIntentController;
+use App\Http\Controllers\Api\Stripe\InvoiceController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\StripeWebhookController;
@@ -204,6 +205,18 @@ Route::middleware([
             Route::post('/create', [SubscriptionPromoCodePaymentIntentController::class, 'createSubscription']);
             Route::post('/confirm', [SubscriptionPromoCodePaymentIntentController::class, 'confirmSubscription']);
         });
+    });
+
+    // ==================== Centralized Invoice Management ====================
+    Route::prefix('stripe/invoices')->middleware(['stripe.rate_limit:default'])->group(function () {
+        Route::get('/', [InvoiceController::class, 'index']);
+        Route::get('/statistics', [InvoiceController::class, 'statistics']);
+        Route::post('/sync', [InvoiceController::class, 'syncFromStripe']);
+        Route::get('/{invoiceId}', [InvoiceController::class, 'show']);
+        Route::get('/{invoiceId}/download', [InvoiceController::class, 'downloadPdf']);
+        Route::get('/{invoiceId}/view-on-stripe', [InvoiceController::class, 'viewOnStripe']);
+        Route::get('/{invoiceId}/print', [InvoiceController::class, 'printData']);
+        Route::post('/{invoiceId}/resend-email', [InvoiceController::class, 'resendEmail']);
     });
 });
 

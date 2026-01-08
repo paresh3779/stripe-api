@@ -23,7 +23,15 @@ use App\Mail\SubscriptionCancelledMail;
 use App\Mail\SubscriptionExpiredMail;
 use App\Mail\SubscriptionExpirationReminderMail;
 use App\Mail\InvoicePaidMail;
+use App\Mail\InvoiceCreatedMail;
+use App\Mail\InvoiceFinalizedMail;
+use App\Mail\InvoiceUpcomingMail;
 use App\Mail\PaymentFailedMail;
+use App\Mail\PaymentReceiptMail;
+use App\Mail\PaymentRetrySucceededMail;
+use App\Mail\RefundConfirmationMail;
+use App\Mail\DisputeNotificationMail;
+use App\Mail\DisputeResolvedMail;
 use Illuminate\Support\Facades\Mail;
 
 class StripeWebhookController extends Controller
@@ -93,6 +101,15 @@ class StripeWebhookController extends Controller
                 break;
             case StripeEventType::INVOICE_PAYMENT_FAILED:
                 $this->handleInvoicePaymentFailed($event->data->object);
+                break;
+            case StripeEventType::INVOICE_UPCOMING:
+                $this->handleInvoiceUpcoming($event->data->object);
+                break;
+            case StripeEventType::INVOICE_VOIDED:
+                $this->handleInvoiceVoided($event->data->object);
+                break;
+            case StripeEventType::INVOICE_MARKED_UNCOLLECTIBLE:
+                $this->handleInvoiceMarkedUncollectible($event->data->object);
                 break;
             default:
                 \Log::info('Webhook: Unhandled event type', ['type' => $event->type]);
@@ -222,11 +239,31 @@ class StripeWebhookController extends Controller
             'status' => $paymentIntent->status,
         ]);
 
-        Payment::where('stripe_payment_intent_id', $paymentIntent->id)->update([
-            'status' => PaymentStatus::SUCCEEDED,
-            'paid_at' => now(),
-            'updated_at' => now(),
-        ]);
+        try {
+            $payment = Payment::where('stripe_payment_intent_id', $paymentIntent->id)->first();
+            
+            if ($payment) {
+                $payment->update([
+                    'status' => PaymentStatus::SUCCEEDED,
+                    'paid_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                // Send payment receipt email
+                $user = $payment->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new PaymentReceiptMail($payment));
+                    \Log::info('handlePaymentIntentSucceeded: Receipt email queued', [
+                        'payment_id' => $payment->id,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handlePaymentIntentSucceeded: Error', [
+                'error' => $e->getMessage(),
+                'payment_intent_id' => $paymentIntent->id,
+            ]);
+        }
     }
 
     private function handlePaymentIntentFailed($paymentIntent)
@@ -250,13 +287,42 @@ class StripeWebhookController extends Controller
             'refunded' => $charge->refunded,
         ]);
 
-        // Determine if fully or partially refunded
-        $status = $charge->refunded ? PaymentStatus::REFUNDED : PaymentStatus::PARTIALLY_REFUNDED;
+        try {
+            // Determine if fully or partially refunded
+            $isFullRefund = $charge->refunded;
+            $status = $isFullRefund ? PaymentStatus::REFUNDED : PaymentStatus::PARTIALLY_REFUNDED;
 
-        Payment::where('stripe_charge_id', $charge->id)->update([
-            'status' => $status,
-            'updated_at' => now(),
-        ]);
+            // Find payment by charge_id or payment_intent
+            $payment = Payment::where('stripe_charge_id', $charge->id)
+                ->orWhere('stripe_payment_intent_id', $charge->payment_intent)
+                ->first();
+
+            if ($payment) {
+                $payment->update([
+                    'status' => $status,
+                    'updated_at' => now(),
+                ]);
+
+                // Send refund confirmation email
+                $user = $payment->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new RefundConfirmationMail(
+                        $payment,
+                        $charge->amount_refunded,
+                        $isFullRefund
+                    ));
+                    \Log::info('handleChargeRefunded: Refund email queued', [
+                        'payment_id' => $payment->id,
+                        'amount_refunded' => $charge->amount_refunded,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleChargeRefunded: Error', [
+                'error' => $e->getMessage(),
+                'charge_id' => $charge->id,
+            ]);
+        }
     }
 
     private function handleChargeDisputeCreated($dispute)
@@ -268,10 +334,34 @@ class StripeWebhookController extends Controller
             'amount' => $dispute->amount,
         ]);
 
-        Payment::where('stripe_charge_id', $dispute->charge)->update([
-            'status' => PaymentStatus::DISPUTED,
-            'updated_at' => now(),
-        ]);
+        try {
+            $payment = Payment::where('stripe_charge_id', $dispute->charge)->first();
+
+            if ($payment) {
+                $payment->update([
+                    'status' => PaymentStatus::DISPUTED,
+                    'updated_at' => now(),
+                ]);
+
+                // Send dispute notification email
+                $user = $payment->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new DisputeNotificationMail(
+                        $payment,
+                        $dispute->reason ?? 'general',
+                        $dispute->amount
+                    ));
+                    \Log::info('handleChargeDisputeCreated: Dispute email queued', [
+                        'payment_id' => $payment->id,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleChargeDisputeCreated: Error', [
+                'error' => $e->getMessage(),
+                'dispute_id' => $dispute->id,
+            ]);
+        }
     }
 
     private function handleChargeDisputeClosed($dispute)
@@ -282,13 +372,38 @@ class StripeWebhookController extends Controller
             'status' => $dispute->status,
         ]);
 
-        // Only mark as succeeded if dispute was won, otherwise keep disputed
-        $status = $dispute->status === 'won' ? PaymentStatus::SUCCEEDED : PaymentStatus::DISPUTED;
+        try {
+            // Only mark as succeeded if dispute was won, otherwise keep disputed
+            $status = $dispute->status === 'won' ? PaymentStatus::SUCCEEDED : PaymentStatus::DISPUTED;
 
-        Payment::where('stripe_charge_id', $dispute->charge)->update([
-            'status' => $status,
-            'updated_at' => now(),
-        ]);
+            $payment = Payment::where('stripe_charge_id', $dispute->charge)->first();
+
+            if ($payment) {
+                $payment->update([
+                    'status' => $status,
+                    'updated_at' => now(),
+                ]);
+
+                // Send dispute resolved email
+                $user = $payment->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new DisputeResolvedMail(
+                        $payment,
+                        $dispute->status,
+                        $dispute->amount
+                    ));
+                    \Log::info('handleChargeDisputeClosed: Dispute resolved email queued', [
+                        'payment_id' => $payment->id,
+                        'dispute_status' => $dispute->status,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleChargeDisputeClosed: Error', [
+                'error' => $e->getMessage(),
+                'dispute_id' => $dispute->id,
+            ]);
+        }
     }
 
     private function handleSubscriptionTrialWillEnd($subscription)
@@ -590,6 +705,17 @@ class StripeWebhookController extends Controller
             $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
 
             if ($invoice) {
+                // Send invoice created email for non-draft invoices
+                if ($stripeInvoice->status !== 'draft') {
+                    $user = $invoice->user;
+                    if ($user && $user->email) {
+                        Mail::to($user->email)->queue(new InvoiceCreatedMail($invoice));
+                        \Log::info('handleInvoiceCreated: Email queued', [
+                            'invoice_id' => $invoice->id,
+                        ]);
+                    }
+                }
+
                 \Log::info('handleInvoiceCreated: Invoice synced', [
                     'invoice_id' => $invoice->id,
                 ]);
@@ -618,9 +744,104 @@ class StripeWebhookController extends Controller
 
         try {
             $subscriptionService = app(SubscriptionCheckoutService::class);
-            $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+            $invoice = $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+
+            if ($invoice && $stripeInvoice->amount_due > 0) {
+                // Send invoice finalized email for invoices that require payment
+                $user = $invoice->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new InvoiceFinalizedMail($invoice));
+                    \Log::info('handleInvoiceFinalized: Email queued', [
+                        'invoice_id' => $invoice->id,
+                    ]);
+                }
+            }
         } catch (\Exception $e) {
             \Log::error('handleInvoiceFinalized: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle upcoming invoice event (sent ~3 days before renewal)
+     */
+    private function handleInvoiceUpcoming($stripeInvoice)
+    {
+        \Log::info('Webhook: handleInvoiceUpcoming', [
+            'customer' => $stripeInvoice->customer,
+            'subscription' => $stripeInvoice->subscription,
+            'amount_due' => $stripeInvoice->amount_due,
+        ]);
+
+        try {
+            if (!$stripeInvoice->subscription) {
+                return;
+            }
+
+            $subscription = Subscription::where('stripe_subscription_id', $stripeInvoice->subscription)->first();
+
+            if ($subscription) {
+                $user = $subscription->user;
+                if ($user && $user->email) {
+                    $billingDate = $stripeInvoice->next_payment_attempt
+                        ? \Carbon\Carbon::createFromTimestamp($stripeInvoice->next_payment_attempt)->format('F j, Y')
+                        : $subscription->current_period_end?->format('F j, Y') ?? 'Soon';
+
+                    Mail::to($user->email)->queue(new InvoiceUpcomingMail(
+                        $subscription,
+                        $stripeInvoice->amount_due,
+                        $billingDate
+                    ));
+                    \Log::info('handleInvoiceUpcoming: Upcoming invoice email queued', [
+                        'subscription_id' => $subscription->id,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleInvoiceUpcoming: Error', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Handle invoice voided event
+     */
+    private function handleInvoiceVoided($stripeInvoice)
+    {
+        \Log::info('Webhook: handleInvoiceVoided', [
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+        ]);
+
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+        } catch (\Exception $e) {
+            \Log::error('handleInvoiceVoided: Error', [
+                'error' => $e->getMessage(),
+                'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle invoice marked uncollectible event
+     */
+    private function handleInvoiceMarkedUncollectible($stripeInvoice)
+    {
+        \Log::info('Webhook: handleInvoiceMarkedUncollectible', [
+            'invoice_id' => $stripeInvoice->id,
+            'customer' => $stripeInvoice->customer,
+        ]);
+
+        try {
+            $subscriptionService = app(SubscriptionCheckoutService::class);
+            $subscriptionService->syncInvoiceFromStripe($stripeInvoice);
+        } catch (\Exception $e) {
+            \Log::error('handleInvoiceMarkedUncollectible: Error', [
                 'error' => $e->getMessage(),
                 'invoice_id' => $stripeInvoice->id,
             ]);
