@@ -15,8 +15,10 @@ use App\Models\StripeCustomer;
 use App\Models\StripePaymentMethod;
 use App\Models\Subscription;
 use App\Models\Invoice;
+use App\Models\StripeWebhookEvent;
 use App\Constants\StripeEventType;
 use App\Constants\PaymentStatus;
+use Illuminate\Support\Facades\DB;
 use App\Services\Stripe\Subscription\SubscriptionCheckoutService;
 use App\Mail\SubscriptionCreatedMail;
 use App\Mail\SubscriptionCancelledMail;
@@ -44,13 +46,56 @@ class StripeWebhookController extends Controller
         $sig_header = $request->header('stripe-signature');
 
         try {
-            \Log::info('working....');
             $event = Webhook::constructEvent($payload, $sig_header, $endpoint_secret);
+        } catch (\UnexpectedValueException $e) {
+            \Log::error('Webhook: Invalid payload', ['error' => $e->getMessage()]);
+            return response('Invalid payload', 400);
+        } catch (\Stripe\Exception\SignatureVerificationException $e) {
+            \Log::error('Webhook: Invalid signature', ['error' => $e->getMessage()]);
+            return response('Invalid signature', 400);
         } catch (\Exception $e) {
-            \Log::info('webhook error');
+            \Log::error('Webhook: Error constructing event', ['error' => $e->getMessage()]);
             return response('Webhook error', 400);
         }
-        
+
+        // Idempotency check - prevent duplicate event processing
+        $webhookEvent = StripeWebhookEvent::recordEvent(
+            $event->id,
+            $event->type,
+            ['object_id' => $event->data->object->id ?? null]
+        );
+
+        if (!$webhookEvent) {
+            // Event already processed, return success to prevent Stripe retries
+            \Log::info('Webhook: Duplicate event skipped', [
+                'event_id' => $event->id,
+                'type' => $event->type,
+            ]);
+            return response('Event already processed', 200);
+        }
+
+        try {
+            $this->processEvent($event, $webhookEvent);
+            $webhookEvent->markAsProcessed();
+        } catch (\Exception $e) {
+            $webhookEvent->markAsFailed($e->getMessage());
+            \Log::error('Webhook: Event processing failed', [
+                'event_id' => $event->id,
+                'type' => $event->type,
+                'error' => $e->getMessage(),
+            ]);
+            // Return 200 to prevent infinite retries for known errors
+            // Stripe will retry on 4xx/5xx responses
+        }
+
+        return response('OK', 200);
+    }
+
+    /**
+     * Process the webhook event based on type
+     */
+    private function processEvent($event, StripeWebhookEvent $webhookEvent): void
+    {
         switch ($event->type) {
             case StripeEventType::CHECKOUT_SESSION_COMPLETED:
                 $this->handleCheckoutSessionCompleted($event->data->object);
@@ -112,12 +157,30 @@ class StripeWebhookController extends Controller
             case StripeEventType::INVOICE_MARKED_UNCOLLECTIBLE:
                 $this->handleInvoiceMarkedUncollectible($event->data->object);
                 break;
+            // New handlers for production-ready checkout
+            case StripeEventType::PAYMENT_INTENT_REQUIRES_ACTION:
+                $this->handlePaymentIntentRequiresAction($event->data->object);
+                break;
+            case StripeEventType::PAYMENT_INTENT_CANCELED:
+                $this->handlePaymentIntentCanceled($event->data->object);
+                break;
+            case StripeEventType::CHECKOUT_SESSION_EXPIRED:
+                $this->handleCheckoutSessionExpired($event->data->object);
+                break;
+            case StripeEventType::REVIEW_OPENED:
+                $this->handleReviewOpened($event->data->object);
+                break;
+            case StripeEventType::REVIEW_CLOSED:
+                $this->handleReviewClosed($event->data->object);
+                break;
+            case StripeEventType::CHARGE_FAILED:
+                $this->handleChargeFailed($event->data->object);
+                break;
             default:
                 \Log::info('Webhook: Unhandled event type', ['type' => $event->type]);
+                $webhookEvent->markAsSkipped('Unhandled event type');
                 break;
         }
-
-        return response('OK');
     }
 
     private function handleCheckoutSessionCompleted($session)
@@ -201,34 +264,72 @@ class StripeWebhookController extends Controller
 
         
         
+        // Only create payment record if payment is complete
         if ($session->payment_status == 'paid') {
-            $user_id = $session->metadata->user_id ?? null;
-            $product_id = $session->metadata->product_id ?? null;
-            $price_id = $session->metadata->price_id ?? null;
-            $coupon_id = $session->metadata->coupon_id ?? null;
-            $promo_code_id = $session->metadata->promo_code_id ?? null;
+            $this->createPaymentRecord($session);
+        }
+    }
 
-            Payment::insert([
-                'id' => Str::uuid(),
-                'user_id' => $user_id,
-                'product_id' => $product_id,
-                'price_id' => $price_id,
+    /**
+     * Create payment record from checkout session using database transaction
+     * This ensures atomicity - either all operations succeed or none do
+     */
+    private function createPaymentRecord($session): void
+    {
+        $user_id = $session->metadata->user_id ?? null;
+        $product_id = $session->metadata->product_id ?? null;
+        $price_id = $session->metadata->price_id ?? null;
+
+        // Check if payment already exists (idempotency)
+        $existingPayment = Payment::where('stripe_payment_intent_id', $session->payment_intent)->first();
+        
+        if ($existingPayment) {
+            \Log::info('createPaymentRecord: Payment already exists, skipping', [
+                'payment_id' => $existingPayment->id,
                 'stripe_payment_intent_id' => $session->payment_intent,
-                'stripe_charge_id' => $session->payment_intent ? null : $session->latest_charge,
-                'stripe_invoice_id' => $session->invoice,
-                'description' => 'Payment for ' . ($session->metadata->product_name ?? 'product'),
-                'amount' => $session->amount_total,
-                'currency' => $session->currency,
-                //'status' => PaymentStatus::PAID,
-                'status' => PaymentStatus::SUCCEEDED,
-                'payment_method' => 'stripe',
-                'billing_reason' => 'one_time',
-                'paid_at' => now(),
-                //'coupon_id' => $coupon_id,
-                //'promo_code_id' => $promo_code_id,
-                'created_at' => now(),
-                'updated_at' => now(),
             ]);
+            return;
+        }
+
+        try {
+            DB::transaction(function () use ($session, $user_id, $product_id, $price_id) {
+                $paymentId = Str::uuid();
+
+                Payment::insert([
+                    'id' => $paymentId,
+                    'user_id' => $user_id,
+                    'product_id' => $product_id,
+                    'price_id' => $price_id,
+                    'stripe_payment_intent_id' => $session->payment_intent,
+                    'stripe_charge_id' => null,
+                    'stripe_invoice_id' => $session->invoice,
+                    'description' => 'Payment for ' . ($session->metadata->product_name ?? 'product'),
+                    'amount' => $session->amount_total,
+                    'currency' => $session->currency,
+                    'status' => PaymentStatus::SUCCEEDED,
+                    'payment_method' => 'stripe',
+                    'billing_reason' => 'one_time',
+                    'paid_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                \Log::info('createPaymentRecord: Payment record created', [
+                    'payment_id' => $paymentId,
+                    'user_id' => $user_id,
+                    'amount' => $session->amount_total,
+                    'stripe_payment_intent_id' => $session->payment_intent,
+                ]);
+            });
+        } catch (\Exception $e) {
+            \Log::error('createPaymentRecord: Transaction failed', [
+                'error' => $e->getMessage(),
+                'stripe_payment_intent_id' => $session->payment_intent,
+                'user_id' => $user_id,
+            ]);
+            
+            // Re-throw to mark webhook event as failed for retry
+            throw $e;
         }
     }
 
@@ -859,6 +960,274 @@ class StripeWebhookController extends Controller
             \Log::error('handleInvoiceMarkedUncollectible: Error', [
                 'error' => $e->getMessage(),
                 'invoice_id' => $stripeInvoice->id,
+            ]);
+        }
+    }
+
+    // ============================================================
+    // Production-Ready Payment Failure Handlers
+    // ============================================================
+
+    /**
+     * Handle payment_intent.requires_action event (3DS/SCA authentication required)
+     * 
+     * This occurs when:
+     * - 3D Secure authentication is required
+     * - User needs to complete additional verification
+     * - Bank requires Strong Customer Authentication (SCA)
+     */
+    private function handlePaymentIntentRequiresAction($paymentIntent)
+    {
+        \Log::info('Webhook: handlePaymentIntentRequiresAction', [
+            'payment_intent_id' => $paymentIntent->id,
+            'status' => $paymentIntent->status,
+            'next_action_type' => $paymentIntent->next_action->type ?? null,
+        ]);
+
+        try {
+            $payment = Payment::where('stripe_payment_intent_id', $paymentIntent->id)->first();
+
+            if ($payment) {
+                $payment->update([
+                    'status' => PaymentStatus::REQUIRES_ACTION,
+                    'updated_at' => now(),
+                ]);
+
+                \Log::info('handlePaymentIntentRequiresAction: Payment status updated', [
+                    'payment_id' => $payment->id,
+                    'requires_action' => true,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('handlePaymentIntentRequiresAction: Error', [
+                'error' => $e->getMessage(),
+                'payment_intent_id' => $paymentIntent->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle payment_intent.canceled event
+     * 
+     * This occurs when:
+     * - Payment was explicitly canceled
+     * - User abandoned checkout
+     * - Timeout occurred
+     */
+    private function handlePaymentIntentCanceled($paymentIntent)
+    {
+        \Log::info('Webhook: handlePaymentIntentCanceled', [
+            'payment_intent_id' => $paymentIntent->id,
+            'cancellation_reason' => $paymentIntent->cancellation_reason ?? 'unknown',
+        ]);
+
+        try {
+            $payment = Payment::where('stripe_payment_intent_id', $paymentIntent->id)->first();
+
+            if ($payment) {
+                $payment->update([
+                    'status' => PaymentStatus::CANCELLED,
+                    'updated_at' => now(),
+                ]);
+
+                \Log::info('handlePaymentIntentCanceled: Payment canceled', [
+                    'payment_id' => $payment->id,
+                    'reason' => $paymentIntent->cancellation_reason ?? 'unknown',
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('handlePaymentIntentCanceled: Error', [
+                'error' => $e->getMessage(),
+                'payment_intent_id' => $paymentIntent->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle checkout.session.expired event
+     * 
+     * This occurs when:
+     * - User didn't complete checkout within the session timeout (24 hours by default)
+     * - Session was abandoned
+     */
+    private function handleCheckoutSessionExpired($session)
+    {
+        \Log::info('Webhook: handleCheckoutSessionExpired', [
+            'session_id' => $session->id,
+            'customer' => $session->customer ?? null,
+            'user_id' => $session->metadata->user_id ?? null,
+        ]);
+
+        try {
+            // Log for analytics - checkout abandonment tracking
+            $userId = $session->metadata->user_id ?? null;
+            $productId = $session->metadata->product_id ?? null;
+
+            \Log::warning('Checkout session expired - potential lost sale', [
+                'session_id' => $session->id,
+                'user_id' => $userId,
+                'product_id' => $productId,
+                'amount' => $session->amount_total ?? 0,
+            ]);
+
+            // Optionally: Send abandoned cart email
+            // This would require storing checkout session data when created
+        } catch (\Exception $e) {
+            \Log::error('handleCheckoutSessionExpired: Error', [
+                'error' => $e->getMessage(),
+                'session_id' => $session->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle review.opened event (Stripe Radar fraud detection)
+     * 
+     * This occurs when:
+     * - Payment is flagged for manual review by Stripe Radar
+     * - Suspicious activity detected
+     */
+    private function handleReviewOpened($review)
+    {
+        \Log::warning('Webhook: handleReviewOpened - Payment under fraud review', [
+            'review_id' => $review->id,
+            'payment_intent' => $review->payment_intent ?? null,
+            'reason' => $review->reason ?? 'rule',
+        ]);
+
+        try {
+            if ($review->payment_intent) {
+                $payment = Payment::where('stripe_payment_intent_id', $review->payment_intent)->first();
+
+                if ($payment) {
+                    $payment->update([
+                        'status' => PaymentStatus::UNDER_REVIEW,
+                        'updated_at' => now(),
+                    ]);
+
+                    \Log::warning('handleReviewOpened: Payment marked under review', [
+                        'payment_id' => $payment->id,
+                        'review_reason' => $review->reason ?? 'rule',
+                    ]);
+
+                    // Alert admin about fraud review
+                    // Mail::to(config('mail.admin_email'))->queue(new FraudReviewAlertMail($payment, $review));
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleReviewOpened: Error', [
+                'error' => $e->getMessage(),
+                'review_id' => $review->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle review.closed event (Stripe Radar fraud review completed)
+     * 
+     * This occurs when:
+     * - Manual review completed (approved or refunded)
+     * - Fraud case resolved
+     */
+    private function handleReviewClosed($review)
+    {
+        \Log::info('Webhook: handleReviewClosed', [
+            'review_id' => $review->id,
+            'payment_intent' => $review->payment_intent ?? null,
+            'closed_reason' => $review->closed_reason ?? null,
+        ]);
+
+        try {
+            if ($review->payment_intent) {
+                $payment = Payment::where('stripe_payment_intent_id', $review->payment_intent)->first();
+
+                if ($payment) {
+                    // Determine new status based on review outcome
+                    $newStatus = match ($review->closed_reason) {
+                        'approved' => PaymentStatus::SUCCEEDED,
+                        'refunded', 'refunded_as_fraud' => PaymentStatus::REFUNDED,
+                        'disputed' => PaymentStatus::DISPUTED,
+                        default => $payment->status, // Keep current status
+                    };
+
+                    $payment->update([
+                        'status' => $newStatus,
+                        'updated_at' => now(),
+                    ]);
+
+                    \Log::info('handleReviewClosed: Payment review resolved', [
+                        'payment_id' => $payment->id,
+                        'closed_reason' => $review->closed_reason,
+                        'new_status' => $newStatus,
+                    ]);
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleReviewClosed: Error', [
+                'error' => $e->getMessage(),
+                'review_id' => $review->id,
+            ]);
+        }
+    }
+
+    /**
+     * Handle charge.failed event
+     * 
+     * This occurs when:
+     * - Card declined by issuer
+     * - Insufficient funds
+     * - Expired card
+     * - Incorrect CVC/ZIP
+     * - Unsupported card
+     */
+    private function handleChargeFailed($charge)
+    {
+        \Log::warning('Webhook: handleChargeFailed', [
+            'charge_id' => $charge->id,
+            'payment_intent' => $charge->payment_intent ?? null,
+            'failure_code' => $charge->failure_code ?? null,
+            'failure_message' => $charge->failure_message ?? null,
+        ]);
+
+        try {
+            $payment = null;
+
+            if ($charge->payment_intent) {
+                $payment = Payment::where('stripe_payment_intent_id', $charge->payment_intent)->first();
+            }
+
+            if (!$payment) {
+                $payment = Payment::where('stripe_charge_id', $charge->id)->first();
+            }
+
+            if ($payment) {
+                $payment->update([
+                    'status' => PaymentStatus::FAILED,
+                    'updated_at' => now(),
+                ]);
+
+                // Log detailed failure reason for debugging
+                \Log::warning('handleChargeFailed: Payment failed', [
+                    'payment_id' => $payment->id,
+                    'failure_code' => $charge->failure_code ?? 'unknown',
+                    'failure_message' => $charge->failure_message ?? 'No message',
+                    'decline_code' => $charge->outcome->reason ?? null,
+                ]);
+
+                // Send payment failed notification
+                $user = $payment->user;
+                if ($user && $user->email) {
+                    Mail::to($user->email)->queue(new PaymentFailedMail(
+                        $payment,
+                        null,
+                        $charge->failure_message ?? 'Your payment could not be processed.'
+                    ));
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('handleChargeFailed: Error', [
+                'error' => $e->getMessage(),
+                'charge_id' => $charge->id,
             ]);
         }
     }

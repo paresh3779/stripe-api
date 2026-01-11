@@ -44,6 +44,7 @@ Route::middleware([
             Route::get('/products', [CheckoutController::class, 'getProducts']);
             Route::get('/products/{productId}', [CheckoutController::class, 'getProduct']);
             Route::post('/create-session', [CheckoutController::class, 'createCheckoutSession']);
+            Route::post('/verify-session', [CheckoutController::class, 'verifySession']);
         });
 
         // Checkout with Promo Code
