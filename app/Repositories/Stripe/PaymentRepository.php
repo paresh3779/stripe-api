@@ -66,4 +66,39 @@ class PaymentRepository
     {
         return Payment::with(['user', 'product', 'price'])->find($paymentId);
     }
+
+    /**
+     * Find pending payment for user and price
+     * Used to prevent duplicate payment intents
+     *
+     * @param string $userId
+     * @param string $priceId
+     * @return Payment|null
+     */
+    public function findPendingPayment(string $userId, string $priceId): ?Payment
+    {
+        return Payment::where('user_id', $userId)
+            ->where('price_id', $priceId)
+            ->where('status', 'pending')
+            ->where('created_at', '>=', now()->subMinutes(30))
+            ->whereNotNull('stripe_payment_intent_id')
+            ->orderBy('created_at', 'desc')
+            ->first();
+    }
+
+    /**
+     * Get payments by status
+     *
+     * @param string $status
+     * @param int $limit
+     * @return Collection
+     */
+    public function getByStatus(string $status, int $limit = 100): Collection
+    {
+        return Payment::where('status', $status)
+            ->with(['user', 'product'])
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
+    }
 }

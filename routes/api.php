@@ -72,6 +72,8 @@ Route::middleware([
             Route::get('/products/{productId}', [PaymentIntentController::class, 'getProduct']);
             Route::post('/create', [PaymentIntentController::class, 'createPaymentIntent']);
             Route::post('/confirm', [PaymentIntentController::class, 'confirmPayment']);
+            Route::post('/status', [PaymentIntentController::class, 'getPaymentStatus']);
+            Route::post('/cancel', [PaymentIntentController::class, 'cancelPayment']);
         });
 
         // PaymentIntent with Promo Code
